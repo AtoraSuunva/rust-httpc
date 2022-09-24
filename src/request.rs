@@ -1,15 +1,14 @@
 use std::{
-    io::{BufReader, prelude::*},
-    net::{TcpStream, ToSocketAddrs, SocketAddr},
+    io::{prelude::*, BufReader},
+    net::{SocketAddr, TcpStream, ToSocketAddrs},
     str::from_utf8,
 };
 
-use http::{
-    header::HeaderName,
-    Request, Response, HeaderValue,
-};
+use http::{header::HeaderName, HeaderValue, Request, Response};
 
 // TODO: better error type...
+type RequestError = Box<dyn std::error::Error>;
+
 /// Execute an HTTP 1.1 request, then parse the response
 /// This will build the request line, headers, and body (if any), then send it to the server
 ///
@@ -17,54 +16,20 @@ use http::{
 ///   - too long: client will block until the tcp connection times out
 ///   - too short: the returned body will be cut short
 ///   - not present: content-length defaults to 0, so no body is returned
-pub fn http_request(req: Request<Option<&String>>)
-    -> Result<Response<Vec<u8>>, Box<dyn std::error::Error>> {
-    let port = req.uri().port_u16().unwrap_or(80);
-    let host = req.uri().host().expect("URI has no host").to_string();
-    let authority = format!("{}:{}", host, port);
-
-    let addresses: Vec<SocketAddr> = authority
-        .to_socket_addrs()?
-        .collect();
-
+pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, RequestError> {
+    // Connect to server via TCP
+    let authority = get_authority(&req);
+    let addresses: Vec<SocketAddr> = authority.to_socket_addrs()?.collect();
     let mut stream = TcpStream::connect(addresses.as_slice())?;
 
-    let path_and_query = req
-        .uri()
-        .path_and_query()
-        .unwrap();
-
-    let mut request: Vec<String> = vec![
-        // GET /path HTTP/1.1
-        format!("{} {} HTTP/1.1", req.method(), path_and_query),
-        // Host: www.example.com
-        format!("Host: {}", authority),
-    ];
-
-    // Other headers
-    for (name, value) in req.headers() {
-        let str_value = value.to_str()?;
-        request.push(format!("{}: {}", name, str_value));
-    }
-
-    // Empty line
-    request.push("\r\n".to_string());
-
-    // Body
-    let body = req.body();
-
-    if body.is_some() {
-        request.push(body.unwrap().to_owned());
-    }
-
     // Send request
-    stream.write_all(
-        request.join("\r\n").as_bytes()
-    )?;
+    let http_message = create_http_message(&req)?;
+    stream.write_all(&http_message[..])?;
 
     // Then read response
     let buf_reader = BufReader::new(&stream);
 
+    // Store the HTTP status code, also serves as a signal that we should parse headers
     let mut status_code: Option<u16> = None;
     // Length of body in bytes (from 'Content-Length' header)
     let mut content_length = 0;
@@ -91,7 +56,7 @@ pub fn http_request(req: Request<Option<&String>>)
         }
 
         if line == b"\r\n" {
-            // We've reached the end of the HTTP response
+            // We've reached the end of the HTTP headers
             break;
         } else if status_code.is_none() {
             // First line is status code
@@ -112,10 +77,14 @@ pub fn http_request(req: Request<Option<&String>>)
 
             response_headers.insert(
                 header_name.parse::<HeaderName>()?,
-                header_value.parse::<HeaderValue>()?
+                header_value.parse::<HeaderValue>()?,
             );
         }
     }
+
+    // We hit the empty line that says we've reached the body of the message
+    // Make sure we received a status code (which needs to be there for a valid message)
+    // And then continue on to parse the body
 
     if status_code.is_none() {
         return Err("No status code found".into());
@@ -137,4 +106,51 @@ pub fn http_request(req: Request<Option<&String>>)
         .status(status_code.unwrap())
         .body(body)
         .expect("Failed to construct response"))
+}
+
+/// Get the authority from a request
+///
+/// This is the host and port, e.g. www.example.com:80
+fn get_authority<T>(req: &Request<T>) -> String {
+    let port = req.uri().port_u16().unwrap_or(80);
+    let host = req.uri().host().expect("URI has no host").to_string();
+    format!("{}:{}", host, port)
+}
+
+/// Create a valid HTTP message from a Request
+///
+/// This will build the request line, headers, and body (if any), and return a Vec<u8> that can be sent
+///
+/// Note: Rust uses UTF-8 as default string encodings, so Header/Values are encoded as UTF-8.
+/// In most cases you're likely using ASCII-compatible characters, so this is fine, but you might run into
+/// oddities if you start sending UTF-8 characters in your headers
+fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestError> {
+    let authority = get_authority(req);
+    let path_and_query = req.uri().path_and_query().unwrap();
+
+    let mut message: Vec<u8> = Vec::new();
+
+    // GET /path HTTP/1.1
+    message
+        .extend_from_slice(format!("{} {} HTTP/1.1\r\n", req.method(), path_and_query).as_bytes());
+    // Host: www.example.com
+    message.extend_from_slice(format!("Host: {}\r\n", authority).as_bytes());
+
+    // Other headers
+    for (name, value) in req.headers() {
+        let str_value = value.to_str()?;
+        message.extend_from_slice(format!("{}: {}\r\n", name, str_value).as_bytes());
+    }
+
+    // Empty line
+    message.extend_from_slice(b"\r\n");
+
+    // Body
+    let body = req.body();
+
+    if body.is_some() {
+        message.extend_from_slice(body.unwrap());
+    }
+
+    Ok(message)
 }
