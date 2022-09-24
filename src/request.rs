@@ -1,6 +1,7 @@
 use std::{
     io::{BufReader, prelude::*},
-    net::{TcpStream, ToSocketAddrs, SocketAddr}, str::from_utf8,
+    net::{TcpStream, ToSocketAddrs, SocketAddr},
+    str::from_utf8,
 };
 
 use http::{
@@ -13,7 +14,7 @@ use http::{
 /// This will build the request line, headers, and body (if any), then send it to the server
 ///
 /// Note: if the server returns an incorrect content-length that's:
-///   - too long: client will block until the tcp connection is closed
+///   - too long: client will block until the tcp connection times out
 ///   - too short: the returned body will be cut short
 ///   - not present: content-length defaults to 0, so no body is returned
 pub fn http_request(req: Request<Option<&String>>)
@@ -67,8 +68,6 @@ pub fn http_request(req: Request<Option<&String>>)
     let mut status_code: Option<u16> = None;
     // Length of body in bytes (from 'Content-Length' header)
     let mut content_length = 0;
-    // The body we've received
-    let mut body: Vec<u8> = vec![];
 
     let mut response_builder = Response::builder();
     let response_headers = response_builder
@@ -122,10 +121,12 @@ pub fn http_request(req: Request<Option<&String>>)
         return Err("No status code found".into());
     }
 
-    // Parse the body, reading bytes until we meet content-length
-    loop {
-        let byte = byte_iter.next().unwrap()?;
-        body.push(byte);
+    // The body we've received
+    let mut body: Vec<u8> = Vec::with_capacity(content_length);
+
+    // Parse the body, reading bytes until we meet content-length or end of stream
+    for byte in byte_iter {
+        body.push(byte.unwrap());
         if body.len() >= content_length {
             break;
         }
