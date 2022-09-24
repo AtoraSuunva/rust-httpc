@@ -1,19 +1,13 @@
 use std::str::from_utf8;
 
 use http::header::CONTENT_TYPE;
-use http::{
-    header::HeaderName,
-    Request,
-    Method,
-};
+use http::{header::HeaderName, Method, Request};
 
 use crate::cli::CommonOptions;
 use crate::request::http_request;
 
 pub fn http_get(options: CommonOptions) {
-    let mut request_builder = Request::builder()
-        .method(Method::GET)
-        .uri(options.url);
+    let mut request_builder = Request::builder().method(Method::GET).uri(options.url);
 
     let headers = request_builder.headers_mut().unwrap();
 
@@ -26,9 +20,7 @@ pub fn http_get(options: CommonOptions) {
         headers.insert(key.parse::<HeaderName>().unwrap(), value.parse().unwrap());
     }
 
-    let request = request_builder
-        .body(None)
-        .unwrap();
+    let request = request_builder.body(None).unwrap();
 
     let response = match http_request(request) {
         Ok(response) => response,
