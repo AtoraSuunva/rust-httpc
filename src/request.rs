@@ -1,31 +1,49 @@
 use std::{
     io::{BufReader, prelude::*},
-    net::{TcpStream, ToSocketAddrs},
+    net::{TcpStream, ToSocketAddrs, SocketAddr}, str::from_utf8,
 };
 
 use http::{
     header::HeaderName,
-    Request, Response,
+    Request, Response, HeaderValue,
 };
 
-pub fn http_request(req: Request<String>) -> Response<String> {
+// TODO: better error type...
+/// Execute an HTTP 1.1 request, then parse the response
+/// This will build the request line, headers, and body (if any), then send it to the server
+///
+/// Note: if the server returns an incorrect content-length that's:
+///   - too long: client will block until the tcp connection is closed
+///   - too short: the returned body will be cut short
+///   - not present: content-length defaults to 0, so no body is returned
+pub fn http_request(req: Request<Option<&String>>)
+    -> Result<Response<Vec<u8>>, Box<dyn std::error::Error>> {
     let port = req.uri().port_u16().unwrap_or(80);
-    let host = req.uri().host().unwrap().to_string();
+    let host = req.uri().host().expect("URI has no host").to_string();
     let authority = format!("{}:{}", host, port);
 
-    let address = authority.to_socket_addrs().unwrap().next().unwrap();
-    let mut stream = TcpStream::connect(address).unwrap();
+    let addresses: Vec<SocketAddr> = authority
+        .to_socket_addrs()?
+        .collect();
+
+    let mut stream = TcpStream::connect(addresses.as_slice())?;
+
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .unwrap();
 
     let mut request: Vec<String> = vec![
         // GET /path HTTP/1.1
-        format!("{} {} HTTP/1.1", req.method(), req.uri().path_and_query().unwrap()),
+        format!("{} {} HTTP/1.1", req.method(), path_and_query),
         // Host: www.example.com
-        format!("Host: {}", req.uri().authority().unwrap()),
+        format!("Host: {}", authority),
     ];
 
     // Other headers
     for (name, value) in req.headers() {
-        request.push(format!("{}: {}", name, value.to_str().unwrap()));
+        let str_value = value.to_str()?;
+        request.push(format!("{}: {}", name, str_value));
     }
 
     // Empty line
@@ -34,72 +52,88 @@ pub fn http_request(req: Request<String>) -> Response<String> {
     // Body
     let body = req.body();
 
-    if !body.is_empty() {
-        request.push(body.to_string());
+    if body.is_some() {
+        request.push(body.unwrap().to_owned());
     }
 
     // Send request
-    stream.write_all(request.join("\r\n").as_bytes()).unwrap();
+    stream.write_all(
+        request.join("\r\n").as_bytes()
+    )?;
 
     // Then read response
     let buf_reader = BufReader::new(&stream);
-    let mut http_response = buf_reader
-        .lines()
-        .map(|line| line.unwrap());
 
-    // Length of body in bytes
+    let mut status_code: Option<u16> = None;
+    // Length of body in bytes (from 'Content-Length' header)
     let mut content_length = 0;
-    let mut parsed_length = 0;
-    let mut parsing_headers = true;
-    let mut body: Vec<String> = vec![];
+    // The body we've received
+    let mut body: Vec<u8> = vec![];
 
-    // "HTTP/" 1*DIGIT "." 1*DIGIT SP 3DIGIT SP
-    // > HTTP/1.1 200 OK
-    // Key: Value
-    // > Content-Length: 123
-
-    // ["HTTP/1.1", "200", "OK"]
-    let status_line: Vec<String> = http_response
-        .next()
-        .expect("No input received")
-        .split(' ')
-        .map(|s| s.to_string())
-        .collect();
-
-    let status_code = status_line[1].parse::<u16>().unwrap();
     let mut response_builder = Response::builder();
-    let response_headers = response_builder.headers_mut().unwrap();
+    let response_headers = response_builder
+        .headers_mut()
+        .expect("Failed to get mut ref to headers");
 
-    for line in http_response {
-        if line.is_empty() {
-            parsing_headers = false;
-            continue;
-        }
+    let mut byte_iter = buf_reader.bytes();
 
-        if parsing_headers {
-            // Parse headers
-            let (key, value) = line.split_once(':')
-                .map(|(key, value)| (key.to_lowercase().trim().to_string(), value.trim().to_string()))
-                .expect("Invalid header, no ':' to split on");
-
-            response_headers.insert(key.parse::<HeaderName>().unwrap(), value.parse().unwrap());
-
-            if key == "content-length" {
-                content_length = value.parse().unwrap();
-            }
-        } else {
-            // Parse body
-            // +1 for the newline
-            parsed_length += line.len() + 1;
-            body.push(line);
-            if parsed_length >= content_length {
+    // Parse the metadata: status code & headers
+    loop {
+        // We need to read up to next line
+        // Lines end with \r\n so we collect bytes up to \r\n and then parse the line
+        let mut line: Vec<u8> = vec![];
+        loop {
+            // We won't deal with invalid bytes
+            let byte = byte_iter.next().unwrap()?;
+            line.push(byte);
+            if line.ends_with(b"\r\n") {
                 break;
             }
         }
+
+        if line == b"\r\n" {
+            // We've reached the end of the HTTP response
+            break;
+        } else if status_code.is_none() {
+            // First line is status code
+            let status_code_str = from_utf8(&line).unwrap();
+            let status_code_str = status_code_str.split_whitespace().nth(1).unwrap();
+            let status_code_u16 = status_code_str.parse::<u16>()?;
+            status_code = Some(status_code_u16);
+        } else {
+            // Other lines are headers
+            let header = from_utf8(&line).unwrap();
+            let header = header.split_once(':').unwrap();
+            let header_name = header.0.trim();
+            let header_value = header.1.trim();
+
+            if header_name.to_lowercase() == "content-length" {
+                content_length = header_value.parse::<usize>()?;
+            }
+
+            response_headers.insert(
+                header_name.parse::<HeaderName>()?,
+                header_value.parse::<HeaderValue>()?
+            );
+        }
     }
 
-    response_builder
-        .status(status_code)
-        .body(body.join("\r\n"))
-        .expect("Failed to construct response")
+    if status_code.is_none() {
+        return Err("No status code found".into());
+    }
+
+    // Parse the body, reading bytes until we meet content-length
+    loop {
+        let byte = byte_iter.next().unwrap()?;
+        body.push(byte);
+        if body.len() >= content_length {
+            break;
+        }
+    }
+
+    // Then we can just finalize the response and return it
+    Ok(response_builder
+        .status(status_code.unwrap())
+        .body(body)
+        .expect("Failed to construct response"))
 }

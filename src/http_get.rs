@@ -1,6 +1,10 @@
+use std::str::from_utf8;
+
+use http::header::CONTENT_TYPE;
 use http::{
     header::HeaderName,
     Request,
+    Method,
 };
 
 use crate::cli::CommonOptions;
@@ -8,7 +12,7 @@ use crate::request::http_request;
 
 pub fn http_get(options: CommonOptions) {
     let mut request_builder = Request::builder()
-        .method("GET")
+        .method(Method::GET)
         .uri(options.url);
 
     let headers = request_builder.headers_mut().unwrap();
@@ -23,11 +27,16 @@ pub fn http_get(options: CommonOptions) {
     }
 
     let request = request_builder
-        // TODO: this is a hack, we should be able to set the body to empty `()`
-        .body("".to_string())
+        .body(None)
         .unwrap();
 
-    let response = http_request(request);
+    let response = match http_request(request) {
+        Ok(response) => response,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return;
+        }
+    };
 
     if options.verbose {
         println!("HTTP/1.1 {}", response.status());
@@ -37,5 +46,19 @@ pub fn http_get(options: CommonOptions) {
         println!();
     }
 
-    println!("{}", response.body());
+    match response.headers().get(CONTENT_TYPE) {
+        Some(content_type) => {
+            let content_type = content_type.to_str().unwrap();
+            if content_type.starts_with("text/") || content_type == "application/json" {
+                let body = response.into_body();
+                let text = from_utf8(&body).unwrap();
+                println!("{}", text);
+            } else {
+                println!("Binary data, not displaying.");
+            }
+        }
+        None => {
+            println!("No content type header, not displaying anything.");
+        }
+    }
 }
