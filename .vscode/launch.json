@@ -9,17 +9,13 @@
       "request": "launch",
       "name": "Debug executable 'httpc'",
       "cargo": {
-        "args": [
-          "build",
-          "--bin=httpc",
-          "--package=httpc"
-        ],
+        "args": ["build", "--bin=httpc", "--package=httpc"],
         "filter": {
           "name": "httpc",
           "kind": "bin"
         }
       },
-      "args": [],
+      "args": ["get", "http://httpbin.org/redirect-to?url=get", "-v"],
       "cwd": "${workspaceFolder}"
     },
     {
@@ -27,12 +23,7 @@
       "request": "launch",
       "name": "Debug unit tests in executable 'httpc'",
       "cargo": {
-        "args": [
-          "test",
-          "--no-run",
-          "--bin=httpc",
-          "--package=httpc"
-        ],
+        "args": ["test", "--no-run", "--bin=httpc", "--package=httpc"],
         "filter": {
           "name": "httpc",
           "kind": "bin"

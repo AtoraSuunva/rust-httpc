@@ -21,13 +21,16 @@ pub enum Commands {
         #[clap(flatten)]
         options: CommonOptions,
     },
+
     /// Executes a HTTP POST request and prints the response.
     Post {
         #[clap(flatten)]
         options: CommonOptions,
+
         /// string Associates an inline data to the body HTTP POST request.
         #[clap(short, group = "body", value_parser)]
         data: Option<String>,
+
         /// file Associates the content of a file to the body HTTP POST request.
         #[clap(short, group = "body", value_parser, value_hint = ValueHint::FilePath)]
         file: Option<String>,
@@ -39,15 +42,23 @@ pub struct CommonOptions {
     /// Get help for this command.
     #[clap(long)]
     help: bool,
+
     /// Prints the detail of the response such as protocol, status, and headers.
     #[clap(short, value_parser)]
     pub verbose: bool,
+
     /// Output to a file instead of stdout
     #[clap(short, value_parser, value_hint = ValueHint::FilePath)]
     pub output: Option<String>,
+
+    /// Follow 'Location' header redirects by repeating requests
+    #[clap(short, value_parser)]
+    pub location: bool,
+
     /// key:value Associates headers to HTTP Request with the format 'key:value'.
     #[clap(short, value_parser)]
     pub header: Vec<String>,
+
     /// URL to send the request to.
     #[clap(required = true, value_parser, value_hint = ValueHint::Url)]
     pub url: String,
