@@ -97,11 +97,13 @@ pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, Re
     // The body we've received
     let mut body: Vec<u8> = Vec::with_capacity(content_length);
 
-    // Parse the body, reading bytes until we meet content-length or end of stream
-    for byte in byte_iter {
-        body.push(byte.unwrap());
-        if body.len() >= content_length {
-            break;
+    if content_length > 0 {
+        // Parse the body, reading bytes until we meet content-length or end of stream
+        for byte in byte_iter {
+            body.push(byte.unwrap());
+            if body.len() >= content_length {
+                break;
+            }
         }
     }
 
