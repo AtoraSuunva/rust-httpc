@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueHint};
 
 // httpc help [get|post]
 // httpc get [-v] (-h "k:v")* URL
@@ -14,6 +14,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[clap(group(ArgGroup::new("body")))]
 pub enum Commands {
     /// Executes a HTTP GET request and prints the response.
     Get {
@@ -25,10 +26,10 @@ pub enum Commands {
         #[clap(flatten)]
         options: CommonOptions,
         /// string Associates an inline data to the body HTTP POST request.
-        #[clap(short, value_parser)]
+        #[clap(short, group = "body", value_parser)]
         data: Option<String>,
         /// file Associates the content of a file to the body HTTP POST request.
-        #[clap(short, value_parser)]
+        #[clap(short, group = "body", value_parser, value_hint = ValueHint::FilePath)]
         file: Option<String>,
     },
 }
@@ -45,6 +46,6 @@ pub struct CommonOptions {
     #[clap(short, value_parser)]
     pub header: Vec<String>,
     /// URL to send the request to.
-    #[clap(required = true, value_parser)]
+    #[clap(required = true, value_parser, value_hint = ValueHint::Url)]
     pub url: String,
 }
