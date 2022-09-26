@@ -42,6 +42,9 @@ pub struct CommonOptions {
     /// Prints the detail of the response such as protocol, status, and headers.
     #[clap(short, value_parser)]
     pub verbose: bool,
+    /// Output to a file instead of stdout
+    #[clap(short, value_parser, value_hint = ValueHint::FilePath)]
+    pub output: Option<String>,
     /// key:value Associates headers to HTTP Request with the format 'key:value'.
     #[clap(short, value_parser)]
     pub header: Vec<String>,

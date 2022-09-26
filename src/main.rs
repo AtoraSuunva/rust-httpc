@@ -19,6 +19,7 @@ fn main() {
                 options.header,
                 None,
                 options.verbose,
+                options.output,
             );
         }
         Commands::Post {
@@ -40,12 +41,20 @@ fn main() {
                 options.header,
                 body.as_deref(),
                 options.verbose,
+                options.output,
             );
         }
     }
 }
 
-fn do_request(method: Method, uri: &str, headers: Vec<String>, body: Option<&[u8]>, verbose: bool) {
+fn do_request(
+    method: Method,
+    uri: &str,
+    headers: Vec<String>,
+    body: Option<&[u8]>,
+    verbose: bool,
+    output: Option<String>,
+) {
     let mut request = Request::builder()
         .version(Version::HTTP_11)
         .method(method)
@@ -59,5 +68,11 @@ fn do_request(method: Method, uri: &str, headers: Vec<String>, body: Option<&[u8
 
     let request = request.body(body).unwrap();
     let response = send_request_get_response(request, verbose).unwrap();
-    print!("{}", response);
+
+    if let Some(file) = output {
+        std::fs::write(&file, response).unwrap();
+        println!("Response saved to {}", file);
+    } else {
+        print!("{}", response);
+    }
 }

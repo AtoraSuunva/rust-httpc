@@ -1,0 +1,15 @@
+{
+  "name": "value",
+  "array": [1, 2, 3, 4],
+  "object": {
+    "name": "value"
+  },
+  "arrayOfObjects": [
+    {
+      "name": "value"
+    },
+    {
+      "name": "value"
+    }
+  ]
+}
