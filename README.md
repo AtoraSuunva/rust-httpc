@@ -16,7 +16,7 @@ why would you
 $ httpc get http://httpbin.org/get
 # GET request but verbose (includes response headers)
 $ httpc get -v http://httpbin.org/get
-# POST request with data
+# POST request with data (Content-Length is automatically calculated and set, you only need to provide Content-Type)
 $ httpc post -h 'Content-Type: application/json' -d '{"cool": 1}' http://httpbin.org/post
 # POST request with data from a file
 $ httpc post -h 'Content-Type: application/json' -f ./file.json http://httpbin.org/post

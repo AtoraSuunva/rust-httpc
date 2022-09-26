@@ -7,7 +7,7 @@ use std::{
 use http::{header::HeaderName, HeaderValue, Request, Response};
 
 // TODO: better error type...
-type RequestError = Box<dyn std::error::Error>;
+pub type RequestError = Box<dyn std::error::Error>;
 
 /// Execute an HTTP 1.1 request, then parse the response
 /// This will build the request line, headers, and body (if any), then send it to the server
@@ -24,6 +24,10 @@ pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, Re
 
     // Send request
     let http_message = create_http_message(&req)?;
+
+    // -vv option? very verbose?
+    // println!("{}\n", from_utf8(&http_message)?);
+
     stream.write_all(&http_message[..])?;
 
     // Then read response
@@ -142,14 +146,17 @@ fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestE
         message.extend_from_slice(format!("{}: {}\r\n", name, str_value).as_bytes());
     }
 
+    if let Some(body) = req.body() {
+        // Content-Length: 123
+        message.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+    }
+
     // Empty line
     message.extend_from_slice(b"\r\n");
 
     // Body
-    let body = req.body();
-
-    if body.is_some() {
-        message.extend_from_slice(body.unwrap());
+    if let Some(body) = req.body() {
+        message.extend_from_slice(body);
     }
 
     Ok(message)
