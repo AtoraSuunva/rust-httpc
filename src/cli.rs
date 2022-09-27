@@ -5,12 +5,7 @@ use clap::{ArgGroup, Parser, Subcommand, ValueHint};
 // httpc post [-v] (-h "k:v")* [-d inline-data] [-f file] URL
 
 #[derive(Debug, Parser)]
-#[clap(name = "httpc")]
-#[clap(version = "1.0")]
-#[clap(
-    about = "HTTP client",
-    long_about = "httpc is a curl-like application but supports HTTP protocol only"
-)]
+#[clap(version, about)]
 pub struct Cli {
     /// Get help for this command.
     #[clap(long)]

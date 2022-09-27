@@ -1,5 +1,6 @@
 [package]
 name = "httpc"
+description = "httpc is a curl-like application but supports HTTP protocol only"
 version = "0.1.0"
 edition = "2021"
 
