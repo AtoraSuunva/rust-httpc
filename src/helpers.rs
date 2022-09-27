@@ -40,13 +40,16 @@ pub fn format_response(
             if content_type.starts_with("text/") || content_type == "application/json" {
                 let body = response.body();
                 let text = from_utf8(body).unwrap();
-                write!(formatted, "{}", text)?;
+
+                if !text.is_empty() {
+                    writeln!(formatted, "{}", text)?;
+                }
             } else {
-                write!(formatted, "Binary data, not displaying.")?;
+                writeln!(formatted, "Binary data, not displaying.")?;
             }
         }
         None => {
-            write!(
+            writeln!(
                 formatted,
                 "No content type header, not displaying anything."
             )?;

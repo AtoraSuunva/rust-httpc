@@ -1,8 +1,10 @@
+use std::str::FromStr;
+
 use clap::Parser;
 
 use cli::{Cli, Commands};
 use helpers::{format_response, parse_headers};
-use http::{header, Method, Request, Version};
+use http::{header, Method, Request, StatusCode, Uri, Version};
 use request::http_request;
 
 mod cli;
@@ -82,13 +84,18 @@ fn do_request(
     }
 
     // Follow redirects
-    if location {
+    if location && redirect_on_location(&response.status()) {
         if let Some(header_location) = response.headers().get(header::LOCATION) {
             let header_location = header_location.to_str().unwrap();
+            let header_location = resolve_url(&Uri::from_str(uri).unwrap(), header_location);
+
+            if verbose {
+                println!("\n→ Redirecting to: {}\n", header_location);
+            }
 
             do_request(
                 method,
-                header_location,
+                &header_location,
                 headers,
                 body,
                 verbose,
@@ -96,5 +103,43 @@ fn do_request(
                 location,
             );
         }
+    }
+}
+
+/// Check if the "Location" header has meaning
+///
+/// We should only redirect on 3xx or 201 status codes
+///
+/// https://httpwg.org/specs/rfc9110.html#field.location
+fn redirect_on_location(code: &StatusCode) -> bool {
+    code.is_redirection() || code == &StatusCode::CREATED
+}
+
+fn resolve_url(base: &Uri, url: &str) -> String {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        // full uri
+        // http://example.com/path/to/place + Location: http://foo.com
+        // http://foo.com
+        url.to_string()
+    } else if url.starts_with('/') {
+        // absolute path
+        // <original authority>/<location>
+        // http://example.com/path/to/place + Location: /foo
+        // http://example.com/foo
+        let scheme = base
+            .scheme_str()
+            .map_or(String::from(""), |s| format!("{}://", s));
+        format!("{}{}{}", scheme, base.authority().unwrap(), url)
+    } else {
+        // relative path
+        // <original authority>/<original path minus last part>/<location>
+        // http://example.com/path/to/place + Location: foo
+        // http://example.com/path/to/foo
+        let scheme = base
+            .scheme_str()
+            .map_or(String::from(""), |s| format!("{}://", s));
+        let path: Vec<&str> = base.path().split('/').collect();
+        let path = path[..path.len() - 1].join("/");
+        format!("{}{}{}/{}", scheme, base.authority().unwrap(), path, url)
     }
 }
