@@ -8,6 +8,7 @@ use http::{
     header::{self, HeaderName},
     HeaderValue, Request, Response,
 };
+use openssl::ssl::{SslConnector, SslMethod};
 
 // TODO: better error type...
 pub type RequestError = Box<dyn std::error::Error>;
@@ -20,22 +21,33 @@ pub type RequestError = Box<dyn std::error::Error>;
 ///   - too short: the returned body will be cut short
 ///   - not present: content-length defaults to 0, so no body is returned
 pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, RequestError> {
+    // Create HTTP request we'll send
+    let http_message = create_http_message(&req)?;
+    // -vv option? very verbose?
+    // println!("{}\n", from_utf8(&http_message)?);
+
     // Connect to server via TCP
     let authority = get_authority(&req);
     let addresses: Vec<SocketAddr> = authority.to_socket_addrs()?.collect();
     let mut stream = TcpStream::connect(addresses.as_slice())?;
 
-    // Send request
-    let http_message = create_http_message(&req)?;
+    if req.uri().scheme_str() == Some("https") {
+        // We need to setup a SSL connector to handle TLS for us
+        // I am not implementing crypto myself, so this uses OpenSSL bindings
+        let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
+        let mut stream = connector.connect(req.uri().host().unwrap(), stream)?;
+        stream.write_all(&http_message)?;
+        let buf_reader = BufReader::new(stream);
+        parse_response(buf_reader)
+    } else {
+        stream.write_all(&http_message)?;
+        let buf_reader = BufReader::new(stream);
+        parse_response(buf_reader)
+    }
+}
 
-    // -vv option? very verbose?
-    // println!("{}\n", from_utf8(&http_message)?);
-
-    stream.write_all(&http_message[..])?;
-
-    // Then read response
-    let buf_reader = BufReader::new(&stream);
-
+/// Parse an HTTP response into a rust Response
+fn parse_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>>, RequestError> {
     // Store the HTTP status code, also serves as a signal that we should parse headers
     let mut status_code: Option<u16> = None;
     // Length of body in bytes (from 'Content-Length' header)
@@ -46,7 +58,7 @@ pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, Re
         .headers_mut()
         .expect("Failed to get mut ref to headers");
 
-    let mut byte_iter = buf_reader.bytes();
+    let mut byte_iter = reader.bytes();
 
     // Parse the metadata: status code & headers
     loop {
@@ -121,7 +133,18 @@ pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, Re
 ///
 /// This is the host and port, e.g. www.example.com:80
 fn get_authority<T>(req: &Request<T>) -> String {
-    let port = req.uri().port_u16().unwrap_or(80);
+    let port = req
+        .uri()
+        .port_u16()
+        .unwrap_or_else(|| match req.uri().scheme() {
+            Some(scheme) => match scheme.as_str() {
+                "http" => 80,
+                "https" => 443,
+                _ => panic!("Unknown scheme"),
+            },
+            // Assume http
+            None => 80,
+        });
     let host = req.uri().host().expect("URI has no host").to_string();
     format!("{}:{}", host, port)
 }

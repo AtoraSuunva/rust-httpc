@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.0", features = ["derive"] }
 http = "0.2"
+openssl = "0.10.42"
