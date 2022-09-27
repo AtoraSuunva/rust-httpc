@@ -78,7 +78,6 @@ fn do_request(
 
     if let Some(file) = &output {
         std::fs::write(&file, response.body()).unwrap();
-        println!("Response saved to {}", file);
     } else {
         print!("{}", formatted);
     }
