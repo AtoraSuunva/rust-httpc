@@ -140,8 +140,15 @@ fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestE
     let mut message: Vec<u8> = Vec::new();
 
     // GET /path HTTP/1.1
-    message
-        .extend_from_slice(format!("{} {} HTTP/1.1\r\n", req.method(), path_and_query).as_bytes());
+    message.extend_from_slice(
+        format!(
+            "{} {} {:?}\r\n",
+            req.method(),
+            path_and_query,
+            req.version()
+        )
+        .as_bytes(),
+    );
     // Host: www.example.com
     message.extend_from_slice(format!("Host: {}\r\n", authority).as_bytes());
 
@@ -156,6 +163,12 @@ fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestE
         message.extend_from_slice(
             format!("User-Agent: httpc/{}\r\n", env!("CARGO_PKG_VERSION")).as_bytes(),
         );
+    }
+
+    if req.headers().get(header::CONNECTION).is_none() {
+        // Set a default connection header
+        // We don't reuse the connection, so just tell the server to close
+        message.extend_from_slice(b"Connection: close\r\n");
     }
 
     // Can't chain this, see https://github.com/rust-lang/rust/issues/53667
