@@ -72,9 +72,15 @@ fn do_request(
         req_headers.append(name, value);
     }
 
-    let request = request.body(body).unwrap();
-    let response = http_request(request).expect("Request failed");
-    let formatted = format_response(&response, verbose).unwrap();
+    let request = request.body(body).expect("Request failed to build");
+    let response = match http_request(request) {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!("Request Error: {}", err);
+            std::process::exit(1);
+        }
+    };
+    let formatted = format_response(&response, verbose).expect("Failed to format response");
 
     if let Some(file) = &output {
         std::fs::write(&file, response.body()).unwrap();
