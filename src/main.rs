@@ -117,29 +117,33 @@ fn redirect_on_location(code: &StatusCode) -> bool {
 
 fn resolve_url(base: &Uri, url: &str) -> String {
     if url.starts_with("http://") || url.starts_with("https://") {
-        // full uri
         // http://example.com/path/to/place + Location: http://foo.com
         // http://foo.com
         url.to_string()
     } else if url.starts_with('/') {
-        // absolute path
         // <original authority>/<location>
         // http://example.com/path/to/place + Location: /foo
         // http://example.com/foo
-        let scheme = base
-            .scheme_str()
-            .map_or(String::from(""), |s| format!("{}://", s));
-        format!("{}{}{}", scheme, base.authority().unwrap(), url)
+        let scheme = base.scheme_str().unwrap_or("http");
+        format!("{}://{}{}", scheme, base.authority().unwrap(), url)
+    } else if url.starts_with('?') {
+        // http://example.com/path/to/place + Location: ?foo=bar
+        // http://example.com/path/to/place?foo=bar
+        let scheme = base.scheme_str().unwrap_or("http");
+        format!(
+            "{}://{}{}{}",
+            scheme,
+            base.authority().unwrap(),
+            base.path(),
+            url
+        )
     } else {
-        // relative path
         // <original authority>/<original path minus last part>/<location>
         // http://example.com/path/to/place + Location: foo
         // http://example.com/path/to/foo
-        let scheme = base
-            .scheme_str()
-            .map_or(String::from(""), |s| format!("{}://", s));
+        let scheme = base.scheme_str().unwrap_or("http");
         let path: Vec<&str> = base.path().split('/').collect();
         let path = path[..path.len() - 1].join("/");
-        format!("{}{}{}/{}", scheme, base.authority().unwrap(), path, url)
+        format!("{}://{}{}/{}", scheme, base.authority().unwrap(), path, url)
     }
 }
