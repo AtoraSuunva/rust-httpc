@@ -4,7 +4,10 @@ use std::{
     str::from_utf8,
 };
 
-use http::{header::HeaderName, HeaderValue, Request, Response};
+use http::{
+    header::{self, HeaderName},
+    HeaderValue, Request, Response,
+};
 
 // TODO: better error type...
 pub type RequestError = Box<dyn std::error::Error>;
@@ -148,9 +151,19 @@ fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestE
         message.extend_from_slice(format!("{}: {}\r\n", name, str_value).as_bytes());
     }
 
-    if let Some(body) = req.body() {
-        // Content-Length: 123
-        message.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+    if req.headers().get(header::USER_AGENT).is_none() {
+        // Set a default UA
+        message.extend_from_slice(
+            format!("User-Agent: httpc/{}\r\n", env!("CARGO_PKG_VERSION")).as_bytes(),
+        );
+    }
+
+    // Can't chain this, see https://github.com/rust-lang/rust/issues/53667
+    if req.headers().get(header::CONTENT_LENGTH).is_none() {
+        if let Some(body) = req.body() {
+            // Calculate content-length
+            message.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+        }
     }
 
     // Empty line
