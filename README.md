@@ -45,3 +45,6 @@ School gave me this as an assignment. They suggested C, Go, Python, Java, or Nod
 
 - Reuse connection for following redirects? (map host -> connection?)
 - color?
+- Support Transfer-Encoding: chunked
+  - The Content-Length header is mandatory for messages with entity bodies, unless the message is transported using chunked encoding.
+  - https://en.wikipedia.org/wiki/Chunked_transfer_encoding
