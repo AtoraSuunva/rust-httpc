@@ -45,3 +45,6 @@ School gave me this as an assignment. They suggested C, Go, Python, Java, or Nod
 
 - Reuse connection for following redirects? (map host -> connection?)
 - color?
+- `Transfer-Encoding: chunked`
+- Return `Response<SomeKindOfStream>`? Display headers while the body loads (or even incrementally display body?)
+- Progress bar? `-p`
