@@ -42,22 +42,25 @@ pub enum Commands {
 #[derive(Debug, Parser)]
 pub struct CommonOptions {
     /// Prints the detail of the response such as protocol, status, and headers.
-    #[clap(short, value_parser)]
-    pub verbose: bool,
+    #[clap(short, action = clap::ArgAction::Count)]
+    pub verbosity: u8,
 
     /// Output to a file instead of stdout
-    #[clap(short, value_parser, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    #[clap(short, value_name = "FILE", value_hint = ValueHint::FilePath)]
     pub output: Option<String>,
 
     /// Follow 'Location' header redirects by repeating requests
-    #[clap(short, value_parser)]
+    #[clap(short)]
     pub location: bool,
 
     /// Associates headers to HTTP Request with the format 'key:value'.
-    #[clap(short, value_parser, value_name = "key:value")]
+    #[clap(short, value_name = "key:value")]
     pub header: Vec<String>,
 
     /// URL to send the request to.
-    #[clap(required = true, value_parser, value_hint = ValueHint::Url)]
+    #[clap(required = true, value_hint = ValueHint::Url)]
     pub url: String,
 }
+
+pub const VERBOSE: u8 = 1;
+pub const VERY_VERBOSE: u8 = 2;

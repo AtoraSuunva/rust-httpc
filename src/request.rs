@@ -1,14 +1,16 @@
 use std::{
-    io::{prelude::*, BufReader},
+    io::{self, prelude::*, BufReader},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     str::from_utf8,
 };
 
 use http::{
     header::{self, HeaderName},
-    HeaderValue, Request, Response,
+    HeaderValue, Request, Response, Uri,
 };
 use native_tls::TlsConnector;
+
+use crate::cli::VERY_VERBOSE;
 
 // TODO: better error type...
 pub type RequestError = Box<dyn std::error::Error>;
@@ -20,31 +22,48 @@ pub type RequestError = Box<dyn std::error::Error>;
 ///   - too long: client will block until the tcp connection times out
 ///   - too short: the returned body will be cut short
 ///   - not present: content-length defaults to 0, so no body is returned
-pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, RequestError> {
+pub fn http_request(
+    req: Request<Option<&[u8]>>,
+    verbosity: u8,
+) -> Result<Response<Vec<u8>>, RequestError> {
     // Create HTTP request we'll send
     let http_message = create_http_message(&req)?;
-    // -vv option? very verbose?
-    // println!("{}\n", from_utf8(&http_message)?);
 
-    // Connect to server via TCP
-    let authority = get_authority(&req);
+    if verbosity >= VERY_VERBOSE {
+        println!("→ Sending\n{}", from_utf8(&http_message)?);
+    }
+
+    // Connect to server via TCP, using TLS for https
+    let mut stream = tcp_connect(req.uri())?;
+
+    // Send request
+    stream.write_all(&http_message)?;
+
+    // Read & Parse response
+    let buf_reader = BufReader::new(stream);
+    parse_response(buf_reader)
+}
+
+trait ReadAndWrite: io::Read + io::Write {}
+
+impl<T: io::Read + io::Write> ReadAndWrite for T {}
+
+/// Connects to a server via TCP, using TLS for https
+fn tcp_connect(uri: &Uri) -> Result<Box<dyn ReadAndWrite>, RequestError> {
+    let authority = get_authority(uri);
     let addresses: Vec<SocketAddr> = authority.to_socket_addrs()?.collect();
-    let mut stream = TcpStream::connect(addresses.as_slice())?;
+    let stream = TcpStream::connect(addresses.as_slice())?;
 
-    if req.uri().scheme_str() == Some("https") {
+    if uri.scheme_str() == Some("https") {
         // We need to setup a TLS connector to handle HTTPS for us
         // I am not implementing crypto myself, so this uses native_tls
         // Which binds to native implementations for us
         // (openssl on linux, schannel on windows, security-framework on macos)
         let connector = TlsConnector::new().unwrap();
-        let mut stream = connector.connect(req.uri().host().unwrap(), stream)?;
-        stream.write_all(&http_message)?;
-        let buf_reader = BufReader::new(stream);
-        parse_response(buf_reader)
+        let stream = connector.connect(uri.host().unwrap(), stream)?;
+        Ok(Box::new(stream))
     } else {
-        stream.write_all(&http_message)?;
-        let buf_reader = BufReader::new(stream);
-        parse_response(buf_reader)
+        Ok(Box::new(stream))
     }
 }
 
@@ -131,23 +150,21 @@ fn parse_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>>, Re
         .expect("Failed to construct response"))
 }
 
-/// Get the authority from a request
+/// Get the authority from a Uri
 ///
 /// This is the host and port, e.g. www.example.com:80
-fn get_authority<T>(req: &Request<T>) -> String {
-    let port = req
-        .uri()
-        .port_u16()
-        .unwrap_or_else(|| match req.uri().scheme() {
-            Some(scheme) => match scheme.as_str() {
-                "http" => 80,
-                "https" => 443,
-                _ => panic!("Unknown scheme"),
-            },
-            // Assume http
-            None => 80,
-        });
-    let host = req.uri().host().expect("URI has no host").to_string();
+fn get_authority(uri: &Uri) -> String {
+    let port = uri.port_u16().unwrap_or_else(|| match uri.scheme() {
+        Some(scheme) => match scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => panic!("Unknown scheme"),
+        },
+        // Assume http
+        None => 80,
+    });
+
+    let host = uri.host().expect("URI has no host").to_string();
     format!("{}:{}", host, port)
 }
 
@@ -159,7 +176,7 @@ fn get_authority<T>(req: &Request<T>) -> String {
 /// In most cases you're likely using ASCII-compatible characters, so this is fine, but you might run into
 /// oddities if you start sending UTF-8 characters in your headers
 fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestError> {
-    let authority = get_authority(req);
+    let authority = get_authority(req.uri());
     let path_and_query = req.uri().path_and_query().unwrap();
 
     let mut message: Vec<u8> = Vec::new();

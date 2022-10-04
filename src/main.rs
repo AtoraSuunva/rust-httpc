@@ -2,10 +2,12 @@ use std::str::FromStr;
 
 use clap::Parser;
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, VERBOSE};
 use helpers::{format_response, parse_headers};
 use http::{header, Method, Request, StatusCode, Uri, Version};
 use request::http_request;
+
+use crate::cli::VERY_VERBOSE;
 
 mod cli;
 mod helpers;
@@ -21,7 +23,7 @@ fn main() {
                 &options.url,
                 options.header,
                 None,
-                options.verbose,
+                options.verbosity,
                 options.output,
                 options.location,
             );
@@ -44,7 +46,7 @@ fn main() {
                 &options.url,
                 options.header,
                 body.as_deref(),
-                options.verbose,
+                options.verbosity,
                 options.output,
                 options.location,
             );
@@ -57,7 +59,7 @@ fn do_request(
     uri: &str,
     headers: Vec<String>,
     body: Option<&[u8]>,
-    verbose: bool,
+    verbosity: u8,
     output: Option<String>,
     location: bool,
 ) {
@@ -73,29 +75,33 @@ fn do_request(
     }
 
     let request = request.body(body).expect("Request failed to build");
-    let response = match http_request(request) {
+    let response = match http_request(request, verbosity) {
         Ok(response) => response,
         Err(err) => {
             eprintln!("Request Error: {}", err);
             std::process::exit(1);
         }
     };
-    let formatted = format_response(&response, verbose).expect("Failed to format response");
+
+    let formatted = format_response(&response, verbosity).expect("Failed to format response");
 
     if let Some(file) = &output {
         std::fs::write(&file, response.body()).unwrap();
     } else {
+        if verbosity >= VERY_VERBOSE {
+            println!("← Received")
+        }
         print!("{}", formatted);
     }
 
     // Follow redirects
-    if location && redirect_on_location(&response.status()) {
+    if location && should_redirect(&response.status()) {
         if let Some(header_location) = response.headers().get(header::LOCATION) {
             let header_location = header_location.to_str().unwrap();
             let header_location = resolve_url(&Uri::from_str(uri).unwrap(), header_location);
 
-            if verbose {
-                println!("\n→ Redirecting to: {}\n", header_location);
+            if verbosity >= VERBOSE {
+                println!("\n↪ Redirecting to: {}\n", header_location);
             }
 
             do_request(
@@ -103,7 +109,7 @@ fn do_request(
                 &header_location,
                 headers,
                 body,
-                verbose,
+                verbosity,
                 output,
                 location,
             );
@@ -116,10 +122,15 @@ fn do_request(
 /// We should only redirect on 3xx or 201 status codes
 ///
 /// https://httpwg.org/specs/rfc9110.html#field.location
-fn redirect_on_location(code: &StatusCode) -> bool {
+fn should_redirect(code: &StatusCode) -> bool {
     code.is_redirection() || code == &StatusCode::CREATED
 }
 
+/// Attempts to resolve a url based on the location header given
+///
+/// This is a best-attempt to replicate the spec and what chrome/firefox do
+///
+/// Doesn't resolve `.` or `..` in the path
 fn resolve_url(base: &Uri, url: &str) -> String {
     if url.starts_with("http://") || url.starts_with("https://") {
         // http://example.com/path/to/place + Location: http://foo.com

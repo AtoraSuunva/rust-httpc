@@ -4,6 +4,8 @@ use std::str::from_utf8;
 use http::header::{HeaderName, CONTENT_TYPE};
 use http::{HeaderValue, Response};
 
+use crate::cli::VERBOSE;
+
 pub fn parse_headers(header_strings: &Vec<String>) -> Vec<(HeaderName, HeaderValue)> {
     let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
 
@@ -22,11 +24,12 @@ pub fn parse_headers(header_strings: &Vec<String>) -> Vec<(HeaderName, HeaderVal
 /// Parses and format the response as a pretty string
 pub fn format_response(
     response: &Response<Vec<u8>>,
-    verbose: bool,
+    verbosity: u8,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut formatted: String = String::new();
 
-    if verbose {
+    // Log headers
+    if verbosity >= VERBOSE {
         writeln!(formatted, "HTTP/1.1 {}", response.status())?;
         for (key, value) in response.headers() {
             writeln!(formatted, "{}: {}", key, value.to_str().unwrap())?;
