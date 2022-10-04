@@ -8,7 +8,7 @@ use http::{
     header::{self, HeaderName},
     HeaderValue, Request, Response,
 };
-use openssl::ssl::{SslConnector, SslMethod};
+use native_tls::TlsConnector;
 
 // TODO: better error type...
 pub type RequestError = Box<dyn std::error::Error>;
@@ -32,9 +32,11 @@ pub fn http_request(req: Request<Option<&[u8]>>) -> Result<Response<Vec<u8>>, Re
     let mut stream = TcpStream::connect(addresses.as_slice())?;
 
     if req.uri().scheme_str() == Some("https") {
-        // We need to setup a SSL connector to handle TLS for us
-        // I am not implementing crypto myself, so this uses OpenSSL bindings
-        let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
+        // We need to setup a TLS connector to handle HTTPS for us
+        // I am not implementing crypto myself, so this uses native_tls
+        // Which binds to native implementations for us
+        // (openssl on linux, schannel on windows, security-framework on macos)
+        let connector = TlsConnector::new().unwrap();
         let mut stream = connector.connect(req.uri().host().unwrap(), stream)?;
         stream.write_all(&http_message)?;
         let buf_reader = BufReader::new(stream);
