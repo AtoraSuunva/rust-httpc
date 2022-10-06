@@ -5,29 +5,28 @@ use clap::Parser;
 use cli::{Cli, Commands, VERBOSE};
 use helpers::{format_response, parse_headers};
 use http::{header, Method, Request, StatusCode, Uri, Version};
-use request::http_request;
+use http_request::{http_request, RequestError};
 
 use crate::cli::VERY_VERBOSE;
 
 mod cli;
 mod helpers;
-mod request;
+mod http_request;
 
-fn main() {
+fn main() -> Result<(), RequestError> {
     let args = Cli::parse();
 
     match args.command {
-        Commands::Get { options } => {
-            do_request(
-                Method::GET,
-                &options.url,
-                options.header,
-                None,
-                options.verbosity,
-                options.output,
-                options.location,
-            );
-        }
+        Commands::Get { options } => do_request(
+            Method::GET,
+            &options.url,
+            options.header,
+            None,
+            options.verbosity,
+            options.output,
+            options.location,
+        ),
+
         Commands::Post {
             options,
             data,
@@ -38,6 +37,8 @@ fn main() {
                 (Some(data), None) => Some(data.into_bytes()),
                 // -f ./file.txt
                 (None, Some(file)) => Some(std::fs::read(file).unwrap()),
+                // -d '{"data": "here"}' -f ./file.txt
+                (Some(_), Some(_)) => panic!("File and data cannot be used together"),
                 _ => None,
             };
 
@@ -49,7 +50,7 @@ fn main() {
                 options.verbosity,
                 options.output,
                 options.location,
-            );
+            )
         }
     }
 }
@@ -62,7 +63,7 @@ fn do_request(
     verbosity: u8,
     output: Option<String>,
     location: bool,
-) {
+) -> Result<(), RequestError> {
     let mut request = Request::builder()
         .version(Version::HTTP_11)
         .method(&method)
@@ -74,19 +75,12 @@ fn do_request(
         req_headers.append(name, value);
     }
 
-    let request = request.body(body).expect("Request failed to build");
-    let response = match http_request(request, verbosity) {
-        Ok(response) => response,
-        Err(err) => {
-            eprintln!("Request Error: {}", err);
-            std::process::exit(1);
-        }
-    };
-
-    let formatted = format_response(&response, verbosity).expect("Failed to format response");
+    let request = request.body(body)?;
+    let response = http_request(request, verbosity)?;
+    let formatted = format_response(&response, verbosity)?;
 
     if let Some(file) = &output {
-        std::fs::write(&file, response.body()).unwrap();
+        std::fs::write(&file, response.body())?;
     } else {
         if verbosity >= VERY_VERBOSE {
             println!("← Received")
@@ -97,14 +91,14 @@ fn do_request(
     // Follow redirects
     if location && should_redirect(&response.status()) {
         if let Some(header_location) = response.headers().get(header::LOCATION) {
-            let header_location = header_location.to_str().unwrap();
-            let header_location = resolve_url(&Uri::from_str(uri).unwrap(), header_location);
+            let header_location = header_location.to_str()?;
+            let header_location = resolve_url(&Uri::from_str(uri)?, header_location);
 
             if verbosity >= VERBOSE {
                 println!("\n↪ Redirecting to: {}\n", header_location);
             }
 
-            do_request(
+            return do_request(
                 method,
                 &header_location,
                 headers,
@@ -115,6 +109,8 @@ fn do_request(
             );
         }
     }
+
+    Ok(())
 }
 
 /// Check if the "Location" header has meaning

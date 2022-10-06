@@ -10,7 +10,7 @@ use http::{
 };
 use native_tls::TlsConnector;
 
-use crate::cli::VERY_VERBOSE;
+use crate::{cli::VERY_VERBOSE, helpers::get_authority};
 
 // TODO: better error type...
 pub type RequestError = Box<dyn std::error::Error>;
@@ -41,7 +41,7 @@ pub fn http_request(
 
     // Read & Parse response
     let buf_reader = BufReader::new(stream);
-    parse_response(buf_reader)
+    parse_http_response(buf_reader)
 }
 
 trait ReadAndWrite: io::Read + io::Write {}
@@ -67,8 +67,72 @@ fn tcp_connect(uri: &Uri) -> Result<Box<dyn ReadAndWrite>, RequestError> {
     }
 }
 
+/// Create a valid HTTP message from a Request
+///
+/// This will build the request line, headers, and body (if any), and return a Vec<u8> that can be sent
+///
+/// Note: Rust uses UTF-8 as default string encodings, so Header/Values are encoded as UTF-8.
+/// In most cases you're likely using ASCII-compatible characters, so this is fine, but you might run into
+/// oddities if you start sending UTF-8 characters in your headers
+fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestError> {
+    let authority = get_authority(req.uri());
+    let path_and_query = req.uri().path_and_query().unwrap();
+
+    let mut message: Vec<u8> = Vec::new();
+
+    // GET /path HTTP/1.1
+    message.extend_from_slice(
+        format!(
+            "{} {} {:?}\r\n",
+            req.method(),
+            path_and_query,
+            req.version()
+        )
+        .as_bytes(),
+    );
+    // Host: www.example.com
+    message.extend_from_slice(format!("Host: {}\r\n", authority).as_bytes());
+
+    // Other headers
+    for (name, value) in req.headers() {
+        let str_value = value.to_str()?;
+        message.extend_from_slice(format!("{}: {}\r\n", name, str_value).as_bytes());
+    }
+
+    if req.headers().get(header::USER_AGENT).is_none() {
+        // Set a default UA
+        message.extend_from_slice(
+            format!("User-Agent: httpc/{}\r\n", env!("CARGO_PKG_VERSION")).as_bytes(),
+        );
+    }
+
+    if req.headers().get(header::CONNECTION).is_none() {
+        // Set a default connection header
+        // We don't reuse the connection, so just tell the server to close
+        message.extend_from_slice(b"Connection: close\r\n");
+    }
+
+    // Can't chain this, see https://github.com/rust-lang/rust/issues/53667
+    if req.headers().get(header::CONTENT_LENGTH).is_none() {
+        if let Some(body) = req.body() {
+            // Calculate content-length
+            message.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+        }
+    }
+
+    // Empty line
+    message.extend_from_slice(b"\r\n");
+
+    // Body
+    if let Some(body) = req.body() {
+        message.extend_from_slice(body);
+    }
+
+    Ok(message)
+}
+
 /// Parse an HTTP response into a rust Response
-fn parse_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>>, RequestError> {
+fn parse_http_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>>, RequestError> {
     // Store the HTTP status code, also serves as a signal that we should parse headers
     let mut status_code: Option<u16> = None;
     // Length of body in bytes (from 'Content-Length' header)
@@ -148,86 +212,4 @@ fn parse_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>>, Re
         .status(status_code.unwrap())
         .body(body)
         .expect("Failed to construct response"))
-}
-
-/// Get the authority from a Uri
-///
-/// This is the host and port, e.g. www.example.com:80
-fn get_authority(uri: &Uri) -> String {
-    let port = uri.port_u16().unwrap_or_else(|| match uri.scheme() {
-        Some(scheme) => match scheme.as_str() {
-            "http" => 80,
-            "https" => 443,
-            _ => panic!("Unknown scheme"),
-        },
-        // Assume http
-        None => 80,
-    });
-
-    let host = uri.host().expect("URI has no host").to_string();
-    format!("{}:{}", host, port)
-}
-
-/// Create a valid HTTP message from a Request
-///
-/// This will build the request line, headers, and body (if any), and return a Vec<u8> that can be sent
-///
-/// Note: Rust uses UTF-8 as default string encodings, so Header/Values are encoded as UTF-8.
-/// In most cases you're likely using ASCII-compatible characters, so this is fine, but you might run into
-/// oddities if you start sending UTF-8 characters in your headers
-fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestError> {
-    let authority = get_authority(req.uri());
-    let path_and_query = req.uri().path_and_query().unwrap();
-
-    let mut message: Vec<u8> = Vec::new();
-
-    // GET /path HTTP/1.1
-    message.extend_from_slice(
-        format!(
-            "{} {} {:?}\r\n",
-            req.method(),
-            path_and_query,
-            req.version()
-        )
-        .as_bytes(),
-    );
-    // Host: www.example.com
-    message.extend_from_slice(format!("Host: {}\r\n", authority).as_bytes());
-
-    // Other headers
-    for (name, value) in req.headers() {
-        let str_value = value.to_str()?;
-        message.extend_from_slice(format!("{}: {}\r\n", name, str_value).as_bytes());
-    }
-
-    if req.headers().get(header::USER_AGENT).is_none() {
-        // Set a default UA
-        message.extend_from_slice(
-            format!("User-Agent: httpc/{}\r\n", env!("CARGO_PKG_VERSION")).as_bytes(),
-        );
-    }
-
-    if req.headers().get(header::CONNECTION).is_none() {
-        // Set a default connection header
-        // We don't reuse the connection, so just tell the server to close
-        message.extend_from_slice(b"Connection: close\r\n");
-    }
-
-    // Can't chain this, see https://github.com/rust-lang/rust/issues/53667
-    if req.headers().get(header::CONTENT_LENGTH).is_none() {
-        if let Some(body) = req.body() {
-            // Calculate content-length
-            message.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
-        }
-    }
-
-    // Empty line
-    message.extend_from_slice(b"\r\n");
-
-    // Body
-    if let Some(body) = req.body() {
-        message.extend_from_slice(body);
-    }
-
-    Ok(message)
 }

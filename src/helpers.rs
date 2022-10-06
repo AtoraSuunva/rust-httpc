@@ -2,10 +2,11 @@ use std::fmt::Write;
 use std::str::from_utf8;
 
 use http::header::{HeaderName, CONTENT_TYPE};
-use http::{HeaderValue, Response};
+use http::{HeaderValue, Response, Uri};
 
 use crate::cli::VERBOSE;
 
+/// Parses headers from an vect of strings into a vec of (key, value) tuples
 pub fn parse_headers(header_strings: &Vec<String>) -> Vec<(HeaderName, HeaderValue)> {
     let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
 
@@ -60,4 +61,22 @@ pub fn format_response(
     }
 
     Ok(formatted)
+}
+
+/// Get the authority from a Uri
+///
+/// This is the host and port, e.g. www.example.com:80
+pub fn get_authority(uri: &Uri) -> String {
+    let port = uri.port_u16().unwrap_or_else(|| match uri.scheme() {
+        Some(scheme) => match scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => panic!("Unknown scheme"),
+        },
+        // Assume http
+        None => 80,
+    });
+
+    let host = uri.host().expect("URI has no host").to_string();
+    format!("{}:{}", host, port)
 }
