@@ -9,8 +9,12 @@ use http::{
     HeaderValue, Request, Response, Uri,
 };
 use native_tls::TlsConnector;
+use owo_colors::OwoColorize;
 
-use crate::{cli::VERY_VERBOSE, helpers::get_authority};
+use crate::{
+    cli::VERY_VERBOSE,
+    helpers::{get_authority, MColorize},
+};
 
 // TODO: better error type...
 pub type RequestError = Box<dyn std::error::Error>;
@@ -30,7 +34,11 @@ pub fn http_request(
     let http_message = create_http_message(&req)?;
 
     if verbosity >= VERY_VERBOSE {
-        println!("→ Sending\n{}", from_utf8(&http_message)?);
+        println!(
+            "{}\n{}",
+            "→ Sending".out_color(|t| t.yellow()),
+            from_utf8(&http_message)?
+        );
     }
 
     // Connect to server via TCP, using TLS for https

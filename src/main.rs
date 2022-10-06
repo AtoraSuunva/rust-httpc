@@ -1,13 +1,17 @@
-use std::str::FromStr;
+use std::{error::Error, str::FromStr};
 
 use clap::Parser;
 
 use cli::{Cli, Commands, VERBOSE};
 use helpers::{format_response, parse_headers};
-use http::{header, Method, Request, StatusCode, Uri, Version};
+use http::{header, Method, Request, Uri, Version};
 use http_request::{http_request, RequestError};
+use owo_colors::{OwoColorize, Style};
 
-use crate::cli::VERY_VERBOSE;
+use crate::{
+    cli::VERY_VERBOSE,
+    helpers::{resolve_url, should_redirect, MColorize},
+};
 
 mod cli;
 mod helpers;
@@ -15,6 +19,7 @@ mod http_request;
 
 fn main() -> Result<(), RequestError> {
     let args = Cli::parse();
+    args.color.init();
 
     match args.command {
         Commands::Get { options } => do_request(
@@ -38,7 +43,11 @@ fn main() -> Result<(), RequestError> {
                 // -f ./file.txt
                 (None, Some(file)) => Some(std::fs::read(file).unwrap()),
                 // -d '{"data": "here"}' -f ./file.txt
-                (Some(_), Some(_)) => panic!("File and data cannot be used together"),
+                (Some(_), Some(_)) => {
+                    return Err(Box::<dyn Error>::from(
+                        "File and data cannot be used together",
+                    ))
+                }
                 _ => None,
             };
 
@@ -77,13 +86,13 @@ fn do_request(
 
     let request = request.body(body)?;
     let response = http_request(request, verbosity)?;
-    let formatted = format_response(&response, verbosity)?;
 
     if let Some(file) = &output {
         std::fs::write(&file, response.body())?;
     } else {
+        let formatted = format_response(&response, verbosity)?;
         if verbosity >= VERY_VERBOSE {
-            println!("← Received")
+            println!("{}", "← Received".out_color(|t| t.green()))
         }
         print!("{}", formatted);
     }
@@ -95,7 +104,11 @@ fn do_request(
             let header_location = resolve_url(&Uri::from_str(uri)?, header_location);
 
             if verbosity >= VERBOSE {
-                println!("\n↪ Redirecting to: {}\n", header_location);
+                println!(
+                    "\n{} {}\n",
+                    "↪ Redirecting to:".out_color(|t| t.blue()),
+                    header_location.out_color(|t| t.style(Style::new().blue().underline()))
+                );
             }
 
             return do_request(
@@ -111,51 +124,4 @@ fn do_request(
     }
 
     Ok(())
-}
-
-/// Check if the "Location" header has meaning
-///
-/// We should only redirect on 3xx or 201 status codes
-///
-/// https://httpwg.org/specs/rfc9110.html#field.location
-fn should_redirect(code: &StatusCode) -> bool {
-    code.is_redirection() || code == &StatusCode::CREATED
-}
-
-/// Attempts to resolve a url based on the location header given
-///
-/// This is a best-attempt to replicate the spec and what chrome/firefox do
-///
-/// Doesn't resolve `.` or `..` in the path
-fn resolve_url(base: &Uri, url: &str) -> String {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        // http://example.com/path/to/place + Location: http://foo.com
-        // http://foo.com
-        url.to_string()
-    } else if url.starts_with('/') {
-        // <original authority>/<location>
-        // http://example.com/path/to/place + Location: /foo
-        // http://example.com/foo
-        let scheme = base.scheme_str().unwrap_or("http");
-        format!("{}://{}{}", scheme, base.authority().unwrap(), url)
-    } else if url.starts_with('?') {
-        // http://example.com/path/to/place + Location: ?foo=bar
-        // http://example.com/path/to/place?foo=bar
-        let scheme = base.scheme_str().unwrap_or("http");
-        format!(
-            "{}://{}{}{}",
-            scheme,
-            base.authority().unwrap(),
-            base.path(),
-            url
-        )
-    } else {
-        // <original authority>/<original path minus last part>/<location>
-        // http://example.com/path/to/place + Location: foo
-        // http://example.com/path/to/foo
-        let scheme = base.scheme_str().unwrap_or("http");
-        let path: Vec<&str> = base.path().split('/').collect();
-        let path = path[..path.len() - 1].join("/");
-        format!("{}://{}{}/{}", scheme, base.authority().unwrap(), path, url)
-    }
 }

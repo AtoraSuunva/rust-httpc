@@ -1,4 +1,22 @@
-use clap::{ArgGroup, Parser, Subcommand, ValueHint};
+use clap::{ArgEnum, ArgGroup, Parser, Subcommand, ValueHint};
+
+#[derive(ArgEnum, Clone, Copy, Debug)]
+pub enum Color {
+    Always,
+    Auto,
+    Never,
+}
+
+impl Color {
+    pub fn init(self) {
+        // Set a supports-color override based on the variable passed in.
+        match self {
+            Color::Always => owo_colors::set_override(true),
+            Color::Auto => {}
+            Color::Never => owo_colors::set_override(false),
+        }
+    }
+}
 
 // httpc help [get|post]
 // httpc get [-v] (-h "k:v")* URL
@@ -10,6 +28,10 @@ pub struct Cli {
     /// Get help for this command.
     #[clap(long)]
     help: bool,
+
+    /// Should the output be in color?
+    #[clap(long, arg_enum, global = true, default_value = "auto")]
+    pub color: Color,
 
     #[clap(subcommand)]
     pub command: Commands,
@@ -41,7 +63,7 @@ pub enum Commands {
 
 #[derive(Debug, Parser)]
 pub struct CommonOptions {
-    /// Prints the detail of the response such as protocol, status, and headers.
+    /// Verbosity of the output, -v = Prints the detail of the response such as protocol, status, and headers., -vv = and print request message
     #[clap(short, action = clap::ArgAction::Count)]
     pub verbosity: u8,
 
