@@ -35,9 +35,9 @@ pub fn http_request(
 
     if verbosity >= VERY_VERBOSE {
         println!(
-            "{}\n{}",
+            "{}\n{}\n",
             "→ Sending".out_color(|t| t.yellow()),
-            from_utf8(&http_message)?
+            from_utf8(&http_message)?.trim()
         );
     }
 

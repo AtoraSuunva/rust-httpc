@@ -71,6 +71,7 @@ pub fn format_response(
                 .status()
                 .out_color(|t| t.style(color_status(&response.status())))
         )?;
+
         for (key, value) in response.headers() {
             let value = value.to_str().unwrap();
             writeln!(
@@ -80,7 +81,8 @@ pub fn format_response(
                 value.out_color(|t| t.magenta())
             )?;
         }
-        formatted.push('\n');
+
+        writeln!(formatted)?;
     }
 
     match response.headers().get(CONTENT_TYPE) {
@@ -91,21 +93,21 @@ pub fn format_response(
                 let text = from_utf8(body).unwrap();
 
                 if !text.is_empty() {
-                    writeln!(formatted, "{}", text)?;
+                    write!(formatted, "{}", text)?;
                 }
             } else {
-                writeln!(formatted, "Binary data, not displaying.")?;
+                write!(formatted, "Binary data, not displaying.")?;
             }
         }
         None => {
-            writeln!(
+            write!(
                 formatted,
                 "No content type header, not displaying anything."
             )?;
         }
     }
 
-    Ok(formatted)
+    Ok(formatted.trim().to_string())
 }
 
 /// Get the authority from a Uri

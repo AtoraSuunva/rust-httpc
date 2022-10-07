@@ -4,7 +4,7 @@ use clap::Parser;
 
 use cli::{Cli, Commands, VERBOSE};
 use helpers::{format_response, parse_headers};
-use http::{header, Method, Request, Uri, Version};
+use http::{header, Method, Request, Response, Uri, Version};
 use http_request::{http_request, RequestError};
 use owo_colors::{OwoColorize, Style};
 
@@ -87,16 +87,6 @@ fn do_request(
     let request = request.body(body)?;
     let response = http_request(request, verbosity)?;
 
-    if let Some(file) = &output {
-        std::fs::write(&file, response.body())?;
-    } else {
-        let formatted = format_response(&response, verbosity)?;
-        if verbosity >= VERY_VERBOSE {
-            println!("{}", "← Received".out_color(|t| t.green()))
-        }
-        print!("{}", formatted);
-    }
-
     // Follow redirects
     if location && should_redirect(&response.status()) {
         if let Some(header_location) = response.headers().get(header::LOCATION) {
@@ -104,6 +94,9 @@ fn do_request(
             let header_location = resolve_url(&Uri::from_str(uri)?, header_location);
 
             if verbosity >= VERBOSE {
+                // Print response between redirect if verbose
+                print_response(&response, verbosity)?;
+
                 println!(
                     "\n{} {}\n",
                     "↪ Redirecting to:".out_color(|t| t.blue()),
@@ -123,5 +116,33 @@ fn do_request(
         }
     }
 
+    // If we don't redirect, we can finally print (or output to file) the response
+
+    if let Some(file) = &output {
+        std::fs::write(&file, response.body())?;
+
+        if verbosity >= VERBOSE {
+            print_response(&response, verbosity)?;
+            println!(
+                "\n{} {}",
+                "Output written to:".out_color(|t| t.bright_black()),
+                file.out_color(|t| t.style(Style::new().blue().underline()))
+            );
+        }
+    } else {
+        print_response(&response, verbosity)?;
+    }
+
+    Ok(())
+}
+
+fn print_response(response: &Response<Vec<u8>>, verbosity: u8) -> Result<(), RequestError> {
+    let formatted = format_response(response, verbosity)?;
+
+    if verbosity >= VERY_VERBOSE {
+        println!("{}", "← Received".out_color(|t| t.green()))
+    }
+
+    println!("{}", formatted);
     Ok(())
 }
