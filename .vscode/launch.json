@@ -15,7 +15,7 @@
           "kind": "bin"
         }
       },
-      "args": ["get", "http://httpbin.org/redirect-to?url=get", "-v"],
+      "args": ["get", "-vvl", "https://httpbin.org/get"],
       "cwd": "${workspaceFolder}"
     },
     {

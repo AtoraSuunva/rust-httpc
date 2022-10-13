@@ -1,4 +1,5 @@
 use std::{
+    fmt::Write,
     io::{self, prelude::*, BufReader},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     str::from_utf8,
@@ -6,10 +7,10 @@ use std::{
 
 use http::{
     header::{self, HeaderName},
-    HeaderValue, Request, Response, Uri,
+    HeaderMap, HeaderValue, Request, Response, Uri,
 };
 use native_tls::TlsConnector;
-use owo_colors::OwoColorize;
+use owo_colors::{OwoColorize, Style};
 
 use crate::{
     cli::VERY_VERBOSE,
@@ -34,10 +35,21 @@ pub fn http_request(
     let http_message = create_http_message(&req)?;
 
     if verbosity >= VERY_VERBOSE {
-        println!(
-            "{}\n{}\n",
+        let (message, body) = http_message.to_parts(&RequestStyles::colorized())?;
+        let display_body = if !body.is_empty() {
+            match from_utf8(body.as_slice()) {
+                Ok(body) => format!("{}\n\n", body),
+                Err(_) => String::from("[Invalid UTF-8]"),
+            }
+        } else {
+            String::new()
+        };
+
+        print!(
+            "{}\n{}{}",
             "→ Sending".out_color(|t| t.yellow()),
-            from_utf8(&http_message)?.trim()
+            message,
+            display_body,
         );
     }
 
@@ -45,7 +57,9 @@ pub fn http_request(
     let mut stream = tcp_connect(req.uri())?;
 
     // Send request
-    stream.write_all(&http_message)?;
+    let (message, body) = http_message.to_parts(&RequestStyles::default())?;
+    stream.write_all(message.as_bytes())?;
+    stream.write_all(body.as_slice())?;
 
     // Read & Parse response
     let buf_reader = BufReader::new(stream);
@@ -75,66 +89,121 @@ fn tcp_connect(uri: &Uri) -> Result<Box<dyn ReadAndWrite>, RequestError> {
     }
 }
 
+#[derive(Debug, Default)]
+struct RequestStyles {
+    method: Style,
+    abs_path: Style,
+    version: Style,
+    header_name: Style,
+    header_value: Style,
+}
+
+impl RequestStyles {
+    fn colorized() -> Self {
+        Self {
+            method: Style::new().green(),
+            abs_path: Style::new().blue(),
+            version: Style::new().bright_black(),
+            header_name: Style::new().cyan(),
+            header_value: Style::new().purple(),
+        }
+    }
+}
+
+struct HttpMessage {
+    method: String,
+    abs_path: String,
+    version: String,
+    headers: HeaderMap,
+    body: Option<Vec<u8>>,
+}
+
+impl HttpMessage {
+    fn to_parts(&self, styles: &RequestStyles) -> Result<(String, Vec<u8>), std::fmt::Error> {
+        let mut message = String::new();
+
+        write!(
+            message,
+            "{} {} {}\r\n",
+            self.method.style(styles.method),
+            self.abs_path.style(styles.abs_path),
+            self.version.style(styles.version),
+        )?;
+
+        for (name, value) in &self.headers {
+            write!(
+                message,
+                "{}: {}\r\n",
+                name.style(styles.header_name),
+                value.to_str().unwrap().style(styles.header_value),
+            )?;
+        }
+
+        message.push_str("\r\n");
+
+        Ok((message, self.body.clone().unwrap_or_default()))
+    }
+}
+
+impl From<&Request<Option<&[u8]>>> for HttpMessage {
+    fn from(req: &Request<Option<&[u8]>>) -> Self {
+        let method = req.method().to_string();
+        let abs_path = req.uri().path_and_query().unwrap().to_string();
+        let version = format!("{:?}", req.version());
+        let headers = req.headers().to_owned();
+        let body = req.body().map(|b| b.to_vec());
+
+        Self {
+            method,
+            abs_path,
+            version,
+            headers,
+            body,
+        }
+    }
+}
+
 /// Create a valid HTTP message from a Request
 ///
-/// This will build the request line, headers, and body (if any), and return a Vec<u8> that can be sent
+/// This will add any missing required/"strongly suggested" headers (Host, User-Agent, Connection, Content-Length) if not already defined
+/// and then build an HttpMessage that can be turned into a string (to send) or a colored string (to display)
 ///
 /// Note: Rust uses UTF-8 as default string encodings, so Header/Values are encoded as UTF-8.
 /// In most cases you're likely using ASCII-compatible characters, so this is fine, but you might run into
 /// oddities if you start sending UTF-8 characters in your headers
-fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<Vec<u8>, RequestError> {
+fn create_http_message(req: &Request<Option<&[u8]>>) -> Result<HttpMessage, RequestError> {
     let authority = get_authority(req.uri());
-    let path_and_query = req.uri().path_and_query().unwrap();
+    let mut added_headers = HeaderMap::new();
 
-    let mut message: Vec<u8> = Vec::new();
-
-    // GET /path HTTP/1.1
-    message.extend_from_slice(
-        format!(
-            "{} {} {:?}\r\n",
-            req.method(),
-            path_and_query,
-            req.version()
-        )
-        .as_bytes(),
-    );
     // Host: www.example.com
-    message.extend_from_slice(format!("Host: {}\r\n", authority).as_bytes());
-
-    // Other headers
-    for (name, value) in req.headers() {
-        let str_value = value.to_str()?;
-        message.extend_from_slice(format!("{}: {}\r\n", name, str_value).as_bytes());
+    if !req.headers().contains_key(header::HOST) {
+        added_headers.insert(header::HOST, authority.parse()?);
     }
 
-    if req.headers().get(header::USER_AGENT).is_none() {
-        // Set a default UA
-        message.extend_from_slice(
-            format!("User-Agent: httpc/{}\r\n", env!("CARGO_PKG_VERSION")).as_bytes(),
+    // Set a default UA
+    if !req.headers().contains_key(header::USER_AGENT) {
+        added_headers.insert(
+            header::USER_AGENT,
+            format!("httpc/{}", env!("CARGO_PKG_VERSION")).parse()?,
         );
     }
 
-    if req.headers().get(header::CONNECTION).is_none() {
-        // Set a default connection header
-        // We don't reuse the connection, so just tell the server to close
-        message.extend_from_slice(b"Connection: close\r\n");
+    // Set a default connection header
+    // We don't reuse the connection, so just tell the server to close
+    if !req.headers().contains_key(header::CONNECTION) {
+        added_headers.insert(header::CONNECTION, "close".parse()?);
     }
 
+    // Calculate content-length
     // Can't chain this, see https://github.com/rust-lang/rust/issues/53667
-    if req.headers().get(header::CONTENT_LENGTH).is_none() {
+    if !req.headers().contains_key(header::CONTENT_LENGTH) {
         if let Some(body) = req.body() {
-            // Calculate content-length
-            message.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+            added_headers.insert(header::CONTENT_LENGTH, body.len().to_string().parse()?);
         }
     }
 
-    // Empty line
-    message.extend_from_slice(b"\r\n");
-
-    // Body
-    if let Some(body) = req.body() {
-        message.extend_from_slice(body);
-    }
+    let mut message = HttpMessage::from(req);
+    message.headers.extend(added_headers);
 
     Ok(message)
 }
