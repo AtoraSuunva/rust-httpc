@@ -49,5 +49,3 @@ School gave me this as an assignment. They suggested C, Go, Python, Java, or Nod
   - https://en.wikipedia.org/wiki/Chunked_transfer_encoding
 - (?) Return `Response<SomeKindOfStream>`? Display headers while the body loads (or even incrementally display body?)
 - (?) Progress bar? `-p`
-- Resolve `.` and `..` in the path
-- Resolve redirects to `?query=here` (Currently `https://example.com/foo?bar=123` + `Location: ?rar=567` = `https://example.com/?rar=567`)

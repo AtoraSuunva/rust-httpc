@@ -73,10 +73,21 @@ fn do_request(
     output: Option<String>,
     location: bool,
 ) -> Result<(), RequestError> {
+    // Parse out path
+    let uri = Uri::from_str(uri)?;
+    // Resolve . and .. in path
+    let uri = format!(
+        "{}{}",
+        resolve_url(&uri, uri.path()),
+        uri.query().map_or(String::new(), |q| format!("?{}", q))
+    );
+    // Parse back to uri
+    let uri = Uri::from_str(&uri)?;
+
     let mut request = Request::builder()
         .version(Version::HTTP_11)
         .method(&method)
-        .uri(uri);
+        .uri(&uri);
 
     let req_headers = request.headers_mut().unwrap();
 
@@ -91,7 +102,7 @@ fn do_request(
     if location && should_redirect(&response.status()) {
         if let Some(header_location) = response.headers().get(header::LOCATION) {
             let header_location = header_location.to_str()?;
-            let header_location = resolve_url(&Uri::from_str(uri)?, header_location);
+            let header_location = resolve_url(&uri, header_location);
 
             if verbosity >= VERBOSE {
                 // Print response between redirect if verbose

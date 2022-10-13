@@ -137,11 +137,39 @@ pub fn should_redirect(code: &StatusCode) -> bool {
     code.is_redirection() || code == &StatusCode::CREATED
 }
 
+/// Resolve `.` and `..` in a path
+/// ```
+/// assert_eq!(flatten_path("/./test"), "/test");
+/// assert_eq!(flatten_path("/../test"), "/test");
+/// assert_eq!(flatten_path("/foo/./test"), "/foo/test");
+/// assert_eq!(flatten_path("/foo/../test"), "/test");
+/// assert_eq!(flatten_path("/foo/./../test"), "/test");
+/// ```
+fn flatten_path(path: &str) -> String {
+    let path = path
+        .split('/')
+        .skip(1) // skip leading '/', it gives us an empty string that only gives us pain when we fold
+        .filter(|x| x != &".") // we can just ignore `.` since it doesn't change the path
+        .fold(vec![], |mut acc, x| {
+            if x == ".." {
+                acc.pop();
+            } else {
+                acc.push(x);
+            }
+            acc
+        })
+        .join("/");
+
+    // Add leading '/' back, this makes sure we always have it and that
+    // `assert_eq!(flatten_path("/.."), "/")` instead of `""`
+    format!("/{}", path)
+}
+
 /// Attempts to resolve a url based on the location header given
 ///
 /// This is a best-attempt to replicate the spec and what chrome/firefox do
 ///
-/// Doesn't resolve `.` or `..` in the path
+/// Resolves `.` or `..` in the url
 pub fn resolve_url(base: &Uri, url: &str) -> String {
     if url.starts_with("http://") || url.starts_with("https://") {
         // http://example.com/path/to/place + Location: http://foo.com
@@ -151,6 +179,7 @@ pub fn resolve_url(base: &Uri, url: &str) -> String {
         // <original authority>/<location>
         // http://example.com/path/to/place + Location: /foo
         // http://example.com/foo
+        let url = flatten_path(url);
         let scheme = base.scheme_str().unwrap_or("http");
         format!("{}://{}{}", scheme, base.authority().unwrap(), url)
     } else if url.starts_with('?') {
@@ -161,7 +190,7 @@ pub fn resolve_url(base: &Uri, url: &str) -> String {
             "{}://{}{}{}",
             scheme,
             base.authority().unwrap(),
-            base.path(),
+            flatten_path(base.path()),
             url
         )
     } else {
@@ -171,6 +200,7 @@ pub fn resolve_url(base: &Uri, url: &str) -> String {
         let scheme = base.scheme_str().unwrap_or("http");
         let path: Vec<&str> = base.path().split('/').collect();
         let path = path[..path.len() - 1].join("/");
+        let path = flatten_path(&path);
         format!("{}://{}{}/{}", scheme, base.authority().unwrap(), path, url)
     }
 }
