@@ -214,6 +214,8 @@ fn parse_http_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>
     let mut status_code: Option<u16> = None;
     // Length of body in bytes (from 'Content-Length' header)
     let mut content_length = 0;
+    // Is the content body chunked
+    let mut chunked = false;
 
     let mut response_builder = Response::builder();
     let response_headers = response_builder
@@ -256,6 +258,12 @@ fn parse_http_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>
                 content_length = header_value.parse::<usize>()?;
             }
 
+            if header_name.to_lowercase() == "transfer-encoding"
+                && header_value.to_lowercase().contains("chunked")
+            {
+                chunked = true;
+            }
+
             response_headers.insert(
                 header_name.parse::<HeaderName>()?,
                 header_value.parse::<HeaderValue>()?,
@@ -274,12 +282,62 @@ fn parse_http_response<T: Read>(reader: BufReader<T>) -> Result<Response<Vec<u8>
     // The body we've received
     let mut body: Vec<u8> = Vec::with_capacity(content_length);
 
-    if content_length > 0 {
-        // Parse the body, reading bytes until we meet content-length or end of stream
-        for byte in byte_iter {
-            body.push(byte.unwrap());
-            if body.len() >= content_length {
+    if !chunked {
+        if content_length > 0 {
+            // Parse the body, reading bytes until we meet content-length or end of stream
+            for byte in byte_iter {
+                body.push(byte.unwrap());
+                if body.len() >= content_length {
+                    break;
+                }
+            }
+        }
+    } else {
+        loop {
+            // Read the chunk "head"
+            // [hex octets]*(;ext-name=ext-val)\r\n
+            // We need the num of octects in the chunk, but can ignore the chunk-ext
+            // We don't recognize any chunk extensions, so we MUST ignore them
+
+            // Read octets
+            let mut octets: Vec<u8> = vec![];
+            loop {
+                let byte = byte_iter.next().unwrap()?;
+                if byte == b';' || byte == b'\r' {
+                    break;
+                }
+                octets.push(byte);
+            }
+
+            // Read until end of line
+            loop {
+                let byte = byte_iter.next().unwrap()?;
+                if byte == b'\n' {
+                    break;
+                }
+            }
+
+            let octets = usize::from_str_radix(from_utf8(&octets).unwrap(), 16)?;
+
+            if octets == 0 {
+                // We've reached the end of the chunked body
+                // Technically there's trailing headers, but since we don't send "TE: trailers"
+                // the server knows we might just discard the trailers
+                // so we can just discard the trailers and still respect the spec 😎
                 break;
+            }
+
+            // Read the chunk
+            for _ in 0..octets {
+                body.push(byte_iter.next().unwrap()?);
+            }
+
+            // Read the chunk end
+            loop {
+                let byte = byte_iter.next().unwrap()?;
+                if byte == b'\r' && byte_iter.next().unwrap()? == b'\n' {
+                    break;
+                }
             }
         }
     }

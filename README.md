@@ -44,8 +44,5 @@ School gave me this as an assignment. They suggested C, Go, Python, Java, or Nod
 (?) = If I have time
 
 - (?) Reuse connection for following redirects? (map host -> connection?)
-- Support Transfer-Encoding: chunked
-  - The Content-Length header is mandatory for messages with entity bodies, unless the message is transported using chunked encoding.
-  - https://en.wikipedia.org/wiki/Chunked_transfer_encoding
 - (?) Return `Response<SomeKindOfStream>`? Display headers while the body loads (or even incrementally display body?)
 - (?) Progress bar? `-p`
