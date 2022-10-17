@@ -64,6 +64,14 @@ fn main() -> Result<(), RequestError> {
     }
 }
 
+fn ensure_starts_with_schema(uri: &str) -> String {
+    if uri.starts_with("http://") || uri.starts_with("https://") {
+        uri.to_string()
+    } else {
+        format!("http://{}", uri)
+    }
+}
+
 fn do_request(
     method: Method,
     uri: &str,
@@ -73,8 +81,9 @@ fn do_request(
     output: Option<String>,
     location: bool,
 ) -> Result<(), RequestError> {
+    let uri = ensure_starts_with_schema(uri);
     // Parse out path
-    let uri = Uri::from_str(uri)?;
+    let uri = Uri::from_str(uri.as_str())?;
     // Resolve . and .. in path
     let uri = format!(
         "{}{}",
