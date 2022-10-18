@@ -24,20 +24,74 @@ pub trait MColorize: Sized {
 
 impl<D: Sized> MColorize for D {}
 
+#[derive(Debug, Clone)]
+pub enum HeaderParseError {
+    MissingColon(String),
+    InvalidHeaderName(String),
+    InvalidHeaderValue(String),
+    InvalidHeaderValueNonASCII(String),
+}
+
+impl std::fmt::Display for HeaderParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            HeaderParseError::MissingColon(ref s) => {
+                write!(f, "Missing colon in header: '{}'", s)
+            }
+            HeaderParseError::InvalidHeaderName(ref s) => {
+                write!(f, "Invalid header name: '{}'", s)
+            }
+            HeaderParseError::InvalidHeaderValue(ref s) => {
+                write!(f, "Invalid header value: '{}'", s)
+            }
+            HeaderParseError::InvalidHeaderValueNonASCII(ref s) => {
+                write!(f, "Invalid header value (not all visible ASCII): '{}'", s)
+            }
+        }
+    }
+}
+
+impl std::error::Error for HeaderParseError {}
+
 /// Parses headers from an vect of strings into a vec of (key, value) tuples
-pub fn parse_headers(header_strings: &Vec<String>) -> Vec<(HeaderName, HeaderValue)> {
+///
+/// Every string is expected to be of the format `"key: value"`
+///
+/// If the string is not of the correct format, a `HeaderParseError` error is returned
+pub fn parse_headers(
+    header_strings: &Vec<String>,
+) -> Result<Vec<(HeaderName, HeaderValue)>, HeaderParseError> {
     let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
 
     for header in header_strings {
-        let (key, value) = header
+        let parsed = header
             .split_once(':')
-            .map(|(name, value)| (name.trim(), value.trim()))
-            .expect("Invalid header format");
+            .ok_or_else(|| HeaderParseError::MissingColon(header.to_string()))
+            .map(|(name, value)| (name.trim(), value.trim()));
 
-        headers.push((key.parse::<HeaderName>().unwrap(), value.parse().unwrap()));
+        let (name, value) = match parsed {
+            Ok((name, value)) => (name, value),
+            Err(e) => return Err(e),
+        };
+
+        let name = name
+            .parse::<HeaderName>()
+            .map_err(|_| HeaderParseError::InvalidHeaderName(name.to_string()))?;
+
+        let header_value = value
+            .parse::<HeaderValue>()
+            .map_err(|_| HeaderParseError::InvalidHeaderValue(value.to_string()))?;
+
+        if header_value.to_str().is_err() {
+            return Err(HeaderParseError::InvalidHeaderValueNonASCII(
+                value.to_string(),
+            ));
+        }
+
+        headers.push((name, header_value));
     }
 
-    headers
+    Ok(headers)
 }
 
 fn color_status(status: &StatusCode) -> Style {

@@ -17,11 +17,21 @@ mod cli;
 mod helpers;
 mod http_request;
 
-fn main() -> Result<(), RequestError> {
+fn main() {
     let args = Cli::parse();
     args.color.init();
 
-    match args.command {
+    let res = run_command(args.command);
+
+    if res.is_err() {
+        // oh no
+        eprintln!("{}", res.unwrap_err());
+        std::process::exit(1);
+    }
+}
+
+fn run_command(command: Commands) -> Result<(), RequestError> {
+    match command {
         Commands::Get { options } => do_request(
             Method::GET,
             &options.url,
@@ -100,7 +110,7 @@ fn do_request(
 
     let req_headers = request.headers_mut().unwrap();
 
-    for (name, value) in parse_headers(&headers) {
+    for (name, value) in parse_headers(&headers)? {
         req_headers.append(name, value);
     }
 
